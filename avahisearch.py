@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 """
 Search for printers that are announced over DNS-SD (aka Bonjour, Zeroconf, mDNS).
