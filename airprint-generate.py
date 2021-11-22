@@ -70,6 +70,7 @@ DOCUMENT_TYPES = {
     # These content-types will be at the front of the list
     'application/pdf': True,
     'application/postscript': True,
+    'application/vnd.cups-postscript': True,
     'application/vnd.cups-raster': True,
     'application/octet-stream': True,
     'image/urf': True,
