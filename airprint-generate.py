@@ -82,7 +82,6 @@ XML_TEMPLATE = """<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 
 #TODO XXX FIXME
 #<txt-record>Bind=T</txt-record>
-#<txt-record>Collate=T</txt-record>
 
 DOCUMENT_TYPES = {
     # These content-types will be at the front of the list
@@ -212,8 +211,14 @@ class AirPrintGenerate(object):
                             if charset == 'utf-8':
                                 binary_setting = 'T'
 
+                    collate_setting = 'F'
+                    if 'multiple-document-handling-supported' in attrs:
+                        for doc_handling_option in attrs['multiple-document-handling-supported']:
+                            if doc_handling_option == 'separate-documents-collated-copies':
+                                collate_setting = 'T'
+
                     color_setting = 'F'
-                    if 'color-supported' in attrs and attrs['color-supported'] == 'True':
+                    if 'color-supported' in attrs and attrs['color-supported'] == True:
                         color_setting = 'T'
 
                     copies_setting = 'F'
@@ -244,6 +249,7 @@ class AirPrintGenerate(object):
                             'note'          : v['printer-location'],
                             'product'       : '(%s)' % (v['printer-make-and-model']),
                             'Binary'        : binary_setting,
+                            'Collate'       : collate_setting,
                             'Color'         : color_setting,
                             'Copies'        : copies_setting,
                             'Duplex'        : duplex_setting,
