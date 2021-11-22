@@ -246,6 +246,18 @@ class AirPrintGenerate(object):
                             if port_monitor == 'tbcp':
                                 tbcp_setting = 'T'
 
+                    usbmdl_setting = ''
+                    usbmfg_setting = ''
+                    if 'printer-device-id' in attrs:
+                        device_id_split = attrs['printer-device-id'].split(";")
+                        for device_id_entry in device_id_split:
+                            if len(device_id_entry) > 0:
+                                device_id_details = device_id_entry.split(":")
+                                if device_id_details[0] == 'MDL':
+                                    usbmdl_setting = device_id_details[1]
+                                elif device_id_details[0] == 'MFG':
+                                    usbmfg_setting = device_id_details[1]
+
                     collected_printers.append( {
                         'SOURCE'    : 'CUPS', 
                         'name'      : p, 
@@ -267,6 +279,8 @@ class AirPrintGenerate(object):
                             'ty'            : v['printer-info'],
                             'printer-state' : v['printer-state'],
                             'printer-type'  : hex(v['printer-type']),
+                            'usb_MDL'       : usbmdl_setting,
+                            'usb_MFG'       : usbmfg_setting,
                             'adminurl'      : v['printer-uri-supported'],
                             'UUID'          : str(uuid.uuid4()),
                             'pdl'           : fmts,
