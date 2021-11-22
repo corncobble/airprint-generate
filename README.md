@@ -52,6 +52,7 @@ CentOS:
 
 ### Usage: airprint-generate.py [options]
 
+```
 Options:
   -h, --help            show this help message and exit
   -s, --dnssd           Search for network printers using DNS-SD (requires
@@ -71,6 +72,7 @@ Options:
   -p PREFIX, --prefix=PREFIX
                         Prefix all files with this string
   -a, --admin           Include the printer specified URI as the adminurl
+```
 
 ## Docker containerized avahi .service generation
 
