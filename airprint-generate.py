@@ -143,7 +143,7 @@ class AirPrintGenerate(object):
         collected_printers = list()
 
         # Collect shared printers from CUPS if applicable
-        if self.usecups:
+        if self.usecups and cups:
             if self.verbose:
                 sys.stderr.write('Collecting shared printers from CUPS%s' % os.linesep)
             if not self.host:
