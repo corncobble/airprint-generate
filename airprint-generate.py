@@ -22,7 +22,7 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
 """
 
-import cups, os, optparse, re
+import cups, os, optparse, re, uuid
 import urllib.parse as urlparse
 import os.path
 from io import StringIO
@@ -57,14 +57,12 @@ XML_TEMPLATE = """<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 	<txt-record>txtvers=1</txt-record>
 	<txt-record>qtotal=1</txt-record>
 	<txt-record>Transparent=T</txt-record>
-	<txt-record>URF=none</txt-record>
+	<txt-record>URF=DM3</txt-record>
 </service>
 </service-group>"""
 
 #TODO XXX FIXME
-#<txt-record>ty=AirPrint Ricoh Aficio MP 6000</txt-record>
 #<txt-record>Binary=T</txt-record>
-#<txt-record>Duplex=T</txt-record>
 #<txt-record>Copies=T</txt-record>
 
 
@@ -166,11 +164,18 @@ class AirPrintGenerate(object):
                 service.append(path)
 
                 desc = Element('txt-record')
-                desc.text = 'note=%s' % (v['printer-info'])
+                if attrs['printer-location'] is not None:
+                    desc.text = 'note=%s' % (v['printer-location'])
+                else:
+                    desc.text = 'note='
                 service.append(desc)
 
+                ty = Element('txt-record')
+                ty.text = 'AirPrint %s' % (v['printer-info'])
+                service.append(ty)
+
                 product = Element('txt-record')
-                product.text = 'product=(GPL Ghostscript)'
+                product.text = 'product=(%s)' % (v['printer-make-and-model'])
                 service.append(product)
 
                 state = Element('txt-record')
@@ -180,6 +185,29 @@ class AirPrintGenerate(object):
                 ptype = Element('txt-record')
                 ptype.text = 'printer-type=%s' % (hex(v['printer-type']))
                 service.append(ptype)
+
+                color = Element('txt-record')
+                if attrs['color-supported']:
+                    color.text = 'Color=T'
+                else:
+                    color.text = 'Color=F'
+                service.append(color)
+
+                duplex = Element('txt-record')
+                if len(attrs['sides-supported']) > 1:
+                    duplex.text = 'Duplex=T'
+                else:
+                    duplex.text = 'Duplex=F'
+                service.append(duplex)
+
+                if attrs['media-default'] == 'iso_a4_210x297mm':
+                    max_paper = Element('txt-record')
+                    max_paper.text = 'PaperMax=legal-A4'
+                    service.append(max_paper)
+
+                airprint_uuid = Element('txt-record')
+                airprint_uuid.text = 'UUID=%s' % (str(uuid.uuid4()))
+                service.append(airprint_uuid)
 
                 pdl = Element('txt-record')
                 fmts = []
@@ -220,7 +248,7 @@ class AirPrintGenerate(object):
                 if self.directory:
                     fname = os.path.join(self.directory, fname)
                 
-                f = open(fname, 'w')
+                f = open(fname, 'wb' if etree else 'w')
 
                 if etree:
                     tree.write(f, pretty_print=True, xml_declaration=True, encoding="UTF-8")
