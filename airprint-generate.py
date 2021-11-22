@@ -82,11 +82,7 @@ XML_TEMPLATE = """<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 
 #TODO XXX FIXME
 #<txt-record>Bind=T</txt-record>
-#<txt-record>Binary=T</txt-record>
 #<txt-record>Collate=T</txt-record>
-#<txt-record>Color=T</txt-record>
-#<txt-record>Copies=T</txt-record>
-
 
 DOCUMENT_TYPES = {
     # These content-types will be at the front of the list
@@ -210,13 +206,31 @@ class AirPrintGenerate(object):
                     if len(dropped) and self.verbose:
                         sys.stderr.write('%s Losing support for: %s%s' % (p, ','.join(dropped), os.linesep))
 
+                    binary_setting = 'F'
+                    if 'charset-supported' in attrs:
+                        for charset in attrs['charset-supported']:
+                            if charset == 'utf-8':
+                                binary_setting = 'T'
+
                     color_setting = 'F'
                     if 'color-supported' in attrs and attrs['color-supported'] == 'True':
                         color_setting = 'T'
 
+                    copies_setting = 'F'
+                    if 'copies-supported' in attrs:
+                        for copies in attrs['copies-supported']:
+                            if int(copies) > 1:
+                                copies_setting = 'T'
+
                     duplex_setting = 'F'
                     if 'sides-supported' in attrs and len(attrs['sides-supported']) > 1:
                         duplex_setting = 'T'
+
+                    tbcp_setting = 'F'
+                    if 'port-monitor-supported' in attrs:
+                        for port_monitor in attrs['port-monitor-supported']:
+                            if port_monitor == 'tbcp':
+                                tbcp_setting = 'T'
 
                     collected_printers.append( {
                         'SOURCE'    : 'CUPS', 
@@ -229,8 +243,11 @@ class AirPrintGenerate(object):
                             'rp'            : rp,
                             'note'          : v['printer-location'],
                             'product'       : '(%s)' % (v['printer-make-and-model']),
+                            'Binary'        : binary_setting,
                             'Color'         : color_setting,
+                            'Copies'        : copies_setting,
                             'Duplex'        : duplex_setting,
+                            'TBCP'          : tbcp_setting,
                             'ty'            : v['printer-info'],
                             'printer-state' : v['printer-state'],
                             'printer-type'  : hex(v['printer-type']),
