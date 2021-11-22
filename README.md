@@ -33,7 +33,7 @@ or /etc/avahi/services (Linux).
 Then restart both avahi and cups with a user with superuser privileges:
 
     sudo service avahi-daemon restart
-    sudo service cups restart
+    sudo service cupsd restart
 
 **Python Requirements:**
 This script requires depends on the python-cups library, and optionally python-lxml to make pretty xml files. 
