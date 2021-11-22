@@ -211,11 +211,11 @@ class AirPrintGenerate(object):
                         sys.stderr.write('%s Losing support for: %s%s' % (p, ','.join(dropped), os.linesep))
 
                     color_setting = 'F'
-                    if attrs['color-supported']:
+                    if 'color-supported' in attrs and attrs['color-supported'] == 'True':
                         color_setting = 'T'
 
                     duplex_setting = 'F'
-                    if len(attrs['sides-supported']) > 1:
+                    if 'sides-supported' in attrs and len(attrs['sides-supported']) > 1:
                         duplex_setting = 'T'
 
                     collected_printers.append( {
