@@ -20,9 +20,17 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+
+***
+Discovery by DNS-SD: Copyright (c) 2013 Vidar Tysse <news@vidartysse.net>
+***
+***
+Update for Secure IPPS/HTTPS Printing and CUPS version 2.1:
+Copyright (c) 2016 Julian Pawlowski <julian.pawlowski@gmail.com>
+***
 """
 
-import cups, os, optparse, re, uuid
+import os, optparse, re, uuid, pprint
 import urllib.parse as urlparse
 import os.path
 from io import StringIO
@@ -44,8 +52,19 @@ except:
             from elementtree import Element, ElementTree, tostring
             etree = None
         except:
-            print('Failed to find python libxml or elementtree, please install one of those or use python >= 2.5')
-            raise
+            raise 'Failed to find python libxml or elementtree, please install one of those or use python >= 2.5'
+
+try:
+    import cups
+except:
+    cups = None
+    sys.stderr.write('Failed to import cups.%s' % os.linesep)
+
+try:
+    import avahisearch
+except:
+    avahisearch = None
+    sys.stderr.write('Failed to import avahisearch.%s' % os.linesep)
 
 XML_TEMPLATE = """<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <service-group>
@@ -62,7 +81,10 @@ XML_TEMPLATE = """<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 </service-group>"""
 
 #TODO XXX FIXME
+#<txt-record>Bind=T</txt-record>
 #<txt-record>Binary=T</txt-record>
+#<txt-record>Collate=T</txt-record>
+#<txt-record>Color=T</txt-record>
 #<txt-record>Copies=T</txt-record>
 
 
@@ -100,7 +122,8 @@ DOCUMENT_TYPES = {
 
 class AirPrintGenerate(object):
     def __init__(self, host=None, user=None, port=None, verbose=False,
-        directory=None, prefix='AirPrint-', adminurl=False):
+        directory=None, prefix='AirPrint-', adminurl=False, usecups=True,
+        useavahi=False, dnsdomain=None, tlsversion=None):
         self.host = host
         self.user = user
         self.port = port
@@ -108,164 +131,209 @@ class AirPrintGenerate(object):
         self.directory = directory
         self.prefix = prefix
         self.adminurl = adminurl
+        self.usecups = usecups and cups
+        self.useavahi = useavahi and avahisearch
+        self.dnsdomain = dnsdomain
+        self.tlsversion = tlsversion
         
         if self.user:
             cups.setUser(self.user)
     
     def generate(self):
-        if not self.host:
-            conn = cups.Connection()
-        else:
-            if not self.port:
-                self.port = 631
-            conn = cups.Connection(self.host, self.port)
-            
-        printers = conn.getPrinters()
-        
-        for p, v in list(printers.items()):
-            if v['printer-is-shared']:
-                attrs = conn.getPrinterAttributes(p)
-                uri = urlparse.urlparse(v['printer-uri-supported'])
+        collected_printers = list()
 
-                tree = ElementTree()
-                tree.parse(StringIO(XML_TEMPLATE.replace('\n', '').replace('\r', '').replace('\t', '')))
+        # Collect shared printers from CUPS if applicable
+        if self.usecups:
+            if self.verbose:
+                sys.stderr.write('Collecting shared printers from CUPS%s' % os.linesep)
+            if not self.host:
+                conn = cups.Connection()
+            else:
+                if not self.port:
+                    self.port = 631
+                conn = cups.Connection(self.host, self.port)
 
-                name = tree.find('name')
-                name.text = 'AirPrint %s @ %%h' % (p)
+            printers = conn.getPrinters()
 
-                service = tree.find('service')
+            for p, v in printers.items():
+                if v['printer-is-shared']:
+                    if self.verbose:
+                     pprint.pprint(v)
 
-                port = service.find('port')
-                port_no = None
-                if hasattr(uri, 'port'):
-                  port_no = uri.port
-                if not port_no:
-                    port_no = self.port
-                if not port_no:
-                    port_no = cups.getPort()
-                port.text = '%d' % port_no
+                    attrs = conn.getPrinterAttributes(p)
+                    uri = urlparse.urlparse(v['printer-uri-supported'])
 
-                if hasattr(uri, 'path'):
-                  rp = uri.path
-                else:
-                  rp = uri[2]
-                
-                re_match = re.match(r'^//(.*):(\d+)(/.*)', rp)
-                if re_match:
-                  rp = re_match.group(3)
-                
-                #Remove leading slashes from path
-                #TODO XXX FIXME I'm worried this will match broken urlparse
-                #results as well (for instance if they don't include a port)
-                #the xml would be malform'd either way
-                rp = re.sub(r'^/+', '', rp)
-                
-                path = Element('txt-record')
-                path.text = 'rp=%s' % (rp)
-                service.append(path)
+                    port_no = None
+                    if hasattr(uri, 'port'):
+                      port_no = uri.port
+                    if not port_no:
+                        port_no = self.port
+                    if not port_no:
+                        port_no = cups.getPort()
 
-                desc = Element('txt-record')
-                if attrs['printer-location'] is not None:
-                    desc.text = 'note=%s' % (v['printer-location'])
-                else:
-                    desc.text = 'note='
-                service.append(desc)
-
-                ty = Element('txt-record')
-                ty.text = 'AirPrint %s' % (v['printer-info'])
-                service.append(ty)
-
-                product = Element('txt-record')
-                product.text = 'product=(%s)' % (v['printer-make-and-model'])
-                service.append(product)
-
-                state = Element('txt-record')
-                state.text = 'printer-state=%s' % (v['printer-state'])
-                service.append(state)
-
-                ptype = Element('txt-record')
-                ptype.text = 'printer-type=%s' % (hex(v['printer-type']))
-                service.append(ptype)
-
-                color = Element('txt-record')
-                if attrs['color-supported']:
-                    color.text = 'Color=T'
-                else:
-                    color.text = 'Color=F'
-                service.append(color)
-
-                duplex = Element('txt-record')
-                if len(attrs['sides-supported']) > 1:
-                    duplex.text = 'Duplex=T'
-                else:
-                    duplex.text = 'Duplex=F'
-                service.append(duplex)
-
-                if attrs['media-default'] == 'iso_a4_210x297mm':
-                    max_paper = Element('txt-record')
-                    max_paper.text = 'PaperMax=legal-A4'
-                    service.append(max_paper)
-
-                airprint_uuid = Element('txt-record')
-                airprint_uuid.text = 'UUID=%s' % (str(uuid.uuid4()))
-                service.append(airprint_uuid)
-
-                pdl = Element('txt-record')
-                fmts = []
-                defer = []
-
-                for a in attrs['document-format-supported']:
-                    if a in DOCUMENT_TYPES:
-                        if DOCUMENT_TYPES[a]:
-                            fmts.append(a)
+                    if hasattr(uri, 'path'):
+                      rp = uri.path
                     else:
-                        defer.append(a)
+                      rp = uri[2]
+                    re_match = re.match(r'^//(.*):(\d+)(/.*)', rp)
+                    if re_match:
+                      rp = re_match.group(3)
+                    #Remove leading slashes from path
+                    #TODO XXX FIXME I'm worried this will match broken urlparse
+                    #results as well (for instance if they don't include a port)
+                    #the xml would be malform'd either way
+                    rp = re.sub(r'^/+', '', rp)
 
-                if 'image/urf' not in fmts:
-                    sys.stderr.write('image/urf is not in mime types, %s may not be available on ios6 (see https://github.com/tjfontaine/airprint-generate/issues/5)%s' % (p, os.linesep))
+                    pdl = Element('txt-record')
+                    fmts = []
+                    defer = []
 
-                fmts = ','.join(fmts+defer)
+                    for a in attrs['document-format-supported']:
+                        if a in DOCUMENT_TYPES:
+                            if DOCUMENT_TYPES[a]:
+                                fmts.append(a)
+                        else:
+                            defer.append(a)
 
-                dropped = []
+                    if 'image/urf' not in fmts:
+                        sys.stderr.write('image/urf is not in mime types, %s may not be available on ios6 (see https://github.com/tjfontaine/airprint-generate/issues/5)%s' % (p, os.linesep))
 
-                # TODO XXX FIXME all fields should be checked for 255 limit
-                while len('pdl=%s' % (fmts)) >= 255:
-                    (fmts, drop) = fmts.rsplit(',', 1)
-                    dropped.append(drop)
+                    fmts = ','.join(fmts+defer)
 
-                if len(dropped) and self.verbose:
-                    sys.stderr.write('%s Losing support for: %s%s' % (p, ','.join(dropped), os.linesep))
+                    dropped = []
 
-                pdl.text = 'pdl=%s' % (fmts)
-                service.append(pdl)
+                    # TODO XXX FIXME all fields should be checked for 255 limit
+                    while len('pdl=%s' % (fmts)) >= 255:
+                        (fmts, drop) = fmts.rsplit(',', 1)
+                        dropped.append(drop)
 
-                if self.adminurl:
-                    admin = Element('txt-record')
-                    admin.text = 'adminurl=%s' % (v['printer-uri-supported'])
-                    service.append(admin)
-                
-                fname = '%s%s.service' % (self.prefix, p)
-                
-                if self.directory:
-                    fname = os.path.join(self.directory, fname)
-                
-                f = open(fname, 'wb' if etree else 'w')
+                    if len(dropped) and self.verbose:
+                        sys.stderr.write('%s Losing support for: %s%s' % (p, ','.join(dropped), os.linesep))
 
-                if etree:
-                    tree.write(f, pretty_print=True, xml_declaration=True, encoding="UTF-8")
-                else:
-                    xmlstr = tostring(tree.getroot())
-                    doc = parseString(xmlstr)
-                    dt= minidom.getDOMImplementation('').createDocumentType('service-group', None, 'avahi-service.dtd')
-                    doc.insertBefore(dt, doc.documentElement)
-                    doc.writexml(f)
-                f.close()
-                
-                if self.verbose:
-                    sys.stderr.write('Created: %s%s' % (fname, os.linesep))
+                    color_setting = 'F'
+                    if attrs['color-supported']:
+                        color_setting = 'T'
+
+                    duplex_setting = 'F'
+                    if len(attrs['sides-supported']) > 1:
+                        duplex_setting = 'T'
+
+                    collected_printers.append( {
+                        'SOURCE'    : 'CUPS', 
+                        'name'      : p, 
+                        'host'      : None,     # Could/should use self.host, but would break old behaviour
+                        'address'   : None,
+                        'port'      : port_no,
+                        'domain'    : 'local', 
+                        'txt'       : {
+                            'rp'            : rp,
+                            'note'          : v['printer-location'],
+                            'product'       : '(%s)' % (v['printer-make-and-model']),
+                            'Color'         : color_setting,
+                            'Duplex'        : duplex_setting,
+                            'ty'            : v['printer-info'],
+                            'printer-state' : v['printer-state'],
+                            'printer-type'  : hex(v['printer-type']),
+                            'adminurl'      : v['printer-uri-supported'],
+                            'UUID'          : str(uuid.uuid4()),
+                            'pdl'           : fmts,
+                            }
+                        } )
+
+        # Collect networked printers using DNS-SD if applicable
+        if (self.useavahi):
+            if self.verbose:
+                sys.stderr.write('Collecting networked printers using DNS-SD%s' % os.linesep)
+            finder = avahisearch.AvahiPrinterFinder(verbose=self.verbose)
+            for p in finder.Search():
+                p['SOURCE'] = 'DNS-SD'
+                collected_printers.append(p)
+
+        # Produce a .service file for each printer found
+        for p in collected_printers:
+            self.produce_settings_file(p)
+
+    def produce_settings_file(self, printer):
+        printer_name = printer['name']
+
+        tree = ElementTree()
+        tree.parse(StringIO(XML_TEMPLATE.replace('\n', '').replace('\r', '').replace('\t', '')))
+
+        name_node = tree.find('name')
+        if self.tlsversion is not None:
+            name_node.text = 'Sec.AirPrint %s @ %%h' % printer_name
+        else:
+            name_node.text = 'AirPrint %s @ %%h' % printer_name
+
+        service_node = tree.find('service')
+
+        port_node = service_node.find('port')
+        port_node.text = '%d' % printer['port']
+
+        if self.tlsversion is not None:
+            type_node = service_node.find('type')
+            type_node.text = '_ipps._tcp'
+            subtype_node = service_node.find('subtype')
+            subtype_node.text = '_universal._sub._ipps._tcp'
+            txt_tls_node = Element('txt-record')
+            txt_tls_node.text = 'TLS=%s' % (self.tlsversion)
+            service_node.append(txt_tls_node)
+
+        host = printer['host']
+        if host:
+            if self.dnsdomain:
+                pair = host.rsplit('.', 1)
+                if len(pair) > 1:
+                    host = '.'.join((pair[0], self.dnsdomain))
+            service_node.append(self.new_node('host-name', host))
+
+        txt = printer['txt']
+        for key in txt:
+            if self.adminurl or key != 'adminurl':
+                service_node.append(self.new_txtrecord_node('%s=%s' % (key, txt[key])))
+
+        source = printer['SOURCE'] if 'SOURCE' in printer else ''
+
+        fname = '%s%s%s.service' % (self.prefix, '%s-' % source if len(source) > 0 else '', printer_name)
+
+        if self.directory:
+            fname = os.path.join(self.directory, fname)
+
+        f = open(fname, 'wb' if etree else 'w')
+
+        if etree:
+            tree.write(fname, pretty_print=True, xml_declaration=True, encoding="UTF-8")
+        else:
+            xmlstr = tostring(tree.getroot())
+            doc = parseString(xmlstr)
+            dt= minidom.getDOMImplementation('').createDocumentType('service-group', None, 'avahi-service.dtd')
+            doc.insertBefore(dt, doc.documentElement)
+            doc.writexml(f)
+        f.close()
+
+        if self.verbose:
+            src = source if len(source) > 0 else 'unknown'
+            sys.stderr.write('Created from %s: %s%s' % (src, fname, os.linesep))
+
+    def new_txtrecord_node(self, text):
+        return self.new_node('txt-record', text)
+
+    def new_node(self, tag, text):
+        element = Element(tag)
+        element.text = text
+        return element
 
 if __name__ == '__main__':
     parser = optparse.OptionParser()
+    parser.add_option('-s', '--dnssd', action="store_true", dest="avahi",
+        help="Search for network printers using DNS-SD (requires avahi)")
+    parser.add_option('-D', '--dnsdomain', action="store", type="string",
+        dest='dnsdomain', help='DNS domain where printers are located.',
+        metavar='DNSDOMAIN')
+    parser.add_option('-c', '--cups', action="store_true", dest="cups",
+        help="Search CUPS for shared printers (requires CUPS)")
+    parser.add_option('-t', '--tls-version', action="store", dest="tlsversion",
+        help="Use the specified TLS version for secure printing connections")
     parser.add_option('-H', '--host', action="store", type="string",
         dest='hostname', help='Hostname of CUPS server (optional)', metavar='HOSTNAME')
     parser.add_option('-P', '--port', action="store", type="int",
@@ -286,10 +354,19 @@ if __name__ == '__main__':
     
     (options, args) = parser.parse_args()
     
-    # TODO XXX FIXME -- if cups login required, need to add
-    # air=username,password
-    from getpass import getpass
-    cups.setPasswordCB(getpass)
+    if not (options.cups and cups) and not (options.avahi and avahisearch):
+        sys.stderr.write('Nothing do do: --cups and/or --dnssd must be specified, and CUPS and/or avahi must be installed.%s' % os.linesep)
+        os._exit(1)
+    if options.cups and not cups:
+        sys.stderr.write('Warning: CUPS is not available. Ignoring --cups option.%s' % os.linesep)
+    if options.avahi and not avahisearch:
+        sys.stderr.write('Warning: Module avahisearch is not available. Ignoring --dnssd option.%s' % os.linesep)
+
+    if options.cups and cups:
+        # TODO XXX FIXME -- if cups login required, need to add
+        # air=username,password
+        from getpass import getpass
+        cups.setPasswordCB(getpass)
     
     if options.directory:
         if not os.path.exists(options.directory):
@@ -303,6 +380,13 @@ if __name__ == '__main__':
         directory=options.directory,
         prefix=options.prefix,
         adminurl=options.adminurl,
+        usecups=options.cups,
+        useavahi=options.avahi,
+        dnsdomain=options.dnsdomain,
+        tlsversion=options.tlsversion
     )
     
     apg.generate()
+
+    if options.avahi and avahisearch and not options.dnsdomain:
+        sys.stderr.write("NOTE: If a printer found by DNS-SD does not resolve outside the local subnet, specify the printer's DNS domain with --dnsdomain or edit the generated <host-name> element to fit your network.%s" % os.linesep)
