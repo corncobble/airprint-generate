@@ -58,13 +58,11 @@ try:
     import cups
 except:
     cups = None
-    sys.stderr.write('Failed to import cups.%s' % os.linesep)
 
 try:
     import avahisearch
 except:
     avahisearch = None
-    sys.stderr.write('Failed to import avahisearch.%s' % os.linesep)
 
 XML_TEMPLATE = """<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
 <service-group>
@@ -121,6 +119,7 @@ class AirPrintGenerate(object):
         useavahi=False, dnsdomain=None, tlsversion=None):
         self.host = host
         self.user = user
+        self.password = None
         self.port = port
         self.verbose = verbose
         self.directory = directory
@@ -131,8 +130,14 @@ class AirPrintGenerate(object):
         self.dnsdomain = dnsdomain
         self.tlsversion = tlsversion
         
-        if self.user:
+        if self.usecups and cups and self.user:
             cups.setUser(self.user)
+            from getpass import getpass
+            self.password = getpass()
+            cups.setPasswordCB(self.get_password)
+
+    def get_password(self):
+        return self.password
     
     def generate(self):
         collected_printers = list()
@@ -205,6 +210,10 @@ class AirPrintGenerate(object):
                     if len(dropped) and self.verbose:
                         sys.stderr.write('%s Losing support for: %s%s' % (p, ','.join(dropped), os.linesep))
 
+                    air_setting = 'none'
+                    if self.user is not None and self.password is not None:
+                        air_setting = '%s,%s' % (self.user, self.password)
+
                     binary_setting = 'F'
                     if 'charset-supported' in attrs:
                         for charset in attrs['charset-supported']:
@@ -245,6 +254,7 @@ class AirPrintGenerate(object):
                         'port'      : port_no,
                         'domain'    : 'local', 
                         'txt'       : {
+                            'air'           : air_setting,
                             'rp'            : rp,
                             'note'          : v['printer-location'],
                             'product'       : '(%s)' % (v['printer-make-and-model']),
@@ -377,20 +387,14 @@ if __name__ == '__main__':
     
     (options, args) = parser.parse_args()
     
-    if not (options.cups and cups) and not (options.avahi and avahisearch):
-        sys.stderr.write('Nothing do do: --cups and/or --dnssd must be specified, and CUPS and/or avahi must be installed.%s' % os.linesep)
-        os._exit(1)
     if options.cups and not cups:
         sys.stderr.write('Warning: CUPS is not available. Ignoring --cups option.%s' % os.linesep)
     if options.avahi and not avahisearch:
         sys.stderr.write('Warning: Module avahisearch is not available. Ignoring --dnssd option.%s' % os.linesep)
+    if not (options.cups and cups) and not (options.avahi and avahisearch):
+        sys.stderr.write('Nothing do do: --cups and/or --dnssd must be specified, and CUPS and/or avahi must be installed.%s' % os.linesep)
+        os._exit(1)
 
-    if options.cups and cups:
-        # TODO XXX FIXME -- if cups login required, need to add
-        # air=username,password
-        from getpass import getpass
-        cups.setPasswordCB(getpass)
-    
     if options.directory:
         if not os.path.exists(options.directory):
             os.mkdir(options.directory)
